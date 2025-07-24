@@ -1,333 +1,304 @@
+//done
 #include "main.hpp"
 #include <stdio.h>
-#include <string.h>
 #include <iostream>
 #include <list>
+#include <string>
 #include <typeinfo>
-#include <queue>
 #include <sstream>
 #include<algorithm>
+#include <cmath>
+#include<map>
+#include<unordered_map>
 using namespace std;
 
-bool sellAgressiveFlag=true;    // if agressive offer is selling - use it in operator function
 int clockTime=0;
+struct PairHash {
+    size_t operator()(const std::pair<char, std::string>& p) const {
+        return std::hash<char>()(p.first) ^ (std::hash<std::string>()(p.second) << 1);
+    }
+};
 
-int charToNumber(char c){
-    if(c<48 || c>57)return 0;
-    return int(c)-48;
+enum Side{
+    SELL, BUY
+};
+
+Side oppositeSide(Side s)
+{
+    return s==Side::SELL ? Side::BUY : Side::SELL;
 }
 
-struct NodeOffer{
+Side charToSide(char c) { return c == 'B' ? Side::BUY : Side::SELL; }
+char SideToChar(Side c) { return c == Side::BUY ? 'B' : 'S'; }
+
+struct NodeOrder{
     int id;
-    char side;      // either S or B
-    char symbol;    // either A or T (or W)
+    Side side;      // either S or B
+    string symbol;    // either A or T (or W)
     int volume;
     float priceInteger;
     int timeTurn;
-    bool operator<(const NodeOffer& s2){
-        float thisPrice=s2.priceInteger;
-        float otherPrice = priceInteger;
-        if (thisPrice == otherPrice) return s2.timeTurn > timeTurn;
-        if(sellAgressiveFlag) return thisPrice < otherPrice ;    // more pricy, more priority
-        else return thisPrice > otherPrice;                     // otherwise
+    NodeOrder()
+    {}
+          
+    NodeOrder(string id_, string symbol_, string price_, string volume_, std::string side_, int time_)
+        : id(stoi(id_)), symbol(symbol_), priceInteger(stof(price_)), volume(stoi(volume_)), side(charToSide(side_[0])),
+          timeTurn(time_) {}
+
+    void copyNode(const NodeOrder& other) {
+        id = other.id;
+        side = other.side;
+        symbol = other.symbol;
+        volume = other.volume;
+        priceInteger = other.priceInteger;
+        timeTurn = other.timeTurn;
+    }
+    void setTimeTurn(int v){
+        timeTurn = v;
+    }
+    void setPrice(string v){
+        priceInteger = stof(v);
+    }
+    void setVolume(int v){
+        volume = v;
+    }
+    void setVolume(string v){
+        volume = stoi(v);
+    }
+
+    void dump()
+    {
+        cout<<" id"<<id<<" side"<<SideToChar(side)<<" symbol"<<symbol<<" volume"<<volume<<" priceInteger"<<priceInteger<<" timeTurn"<<timeTurn<<endl;
     }
 };
-bool cmprFun(const NodeOffer& s2,const float& val){
-    float thisPrice=s2.priceInteger;
-    if(sellAgressiveFlag)return thisPrice > val ; 
-    else return thisPrice < val ; 
-}
-bool cmprFun2(const float& val,const NodeOffer& s2){
-    float thisPrice=s2.priceInteger;
-    if(sellAgressiveFlag)return thisPrice < val ; 
-    else return thisPrice > val ; 
-}
-bool cmprFunTime(const int& valtime, const NodeOffer& s2){
-    int thisTurn=s2.timeTurn;
-    return thisTurn > valtime ; 
-}
-vector<NodeOffer> stock;    // First, tried to implement by priority queue, however, we need access to elements
+// sort based on id - regarding remove / edit , OPTIMIZE lookup
+unordered_map<int, list<NodeOrder>::iterator> idMap; 
+// map side and symbol => order book
+// sort based on price, regarding find a match , OPTIMIZE keeping sorted
+unordered_map<pair<Side,string> , map<float, list<NodeOrder>>, PairHash> orderBooks;
 
-void pull(int argid){
-    for(int j=0; j < stock.size() ; j++ ) 
-        if( stock[j].id == argid ){
-            stock.erase(remove_if(stock.begin(), stock.end(), [argid](const NodeOffer& i){return i.id==argid;}), stock.end());
+NodeOrder copyFromStockByid(string argid){
+    int argid_ = stoi(argid);
+    NodeOrder temp;
+    if(idMap.contains(argid_))
+    {
+        temp.copyNode(*idMap[argid_]);
+        return temp;
+    }
+    return temp;
+}
+void pull(int argid)
+{
+    if(idMap.contains(argid))
+    {
+        orderBooks[{(idMap[argid])->side, (idMap[argid])->symbol}][(idMap[argid])->priceInteger].erase(idMap[argid]);
+        idMap.erase(argid);    
+    }
+}
+
+std::string floatToStr(float val) {
+    
+    string str(to_string((int)(val * 10000) / 1));
+    str.insert(str.size()-4, ".");
+    str.erase(str.find_last_not_of('0') + 1, string::npos);
+    if (str.back() == '.') str.pop_back();
+    return str;
+}
+// vector<int> collectPotentialRecords(NodeOrder aggressiveOffer)
+pair<bool, map<float, list<NodeOrder>>::iterator> collectPotentialRecords(NodeOrder& aggressiveOffer)
+{
+    Side opposeSide = oppositeSide(aggressiveOffer.side);
+    bool success=true;
+    auto& book = orderBooks[{ opposeSide, aggressiveOffer.symbol }]; // map<float, list<NodeOrder>>
+    map<float, list<NodeOrder>>::iterator bestOffer = book.end();
+    if (!book.empty()) {
+        if(opposeSide==Side::BUY)
+        {
+            if( prev(book.end())->first >= aggressiveOffer.priceInteger)
+                bestOffer = prev(book.end());  // Highest price
+        }
+        else 
+        {
+            if( book.begin()->first <= aggressiveOffer.priceInteger)
+                bestOffer = book.begin();  // Lowest price
+        }
+    }
+    else success=false;
+    if( bestOffer == book.end()) success=false;
+    
+    pair<bool, map<float, list<NodeOrder>>::iterator> returnvalue = {success, bestOffer};
+    return returnvalue;
+}
+
+void checkMatching(NodeOrder &aggressiveOffer, vector<string> &output)
+{
+    Side opposeSide = oppositeSide(aggressiveOffer.side);
+    
+    pair<bool, map<float, list<NodeOrder>>::iterator> pos = collectPotentialRecords(aggressiveOffer);
+    while((aggressiveOffer.volume != 0) && pos.first)
+    {
+        auto& searchBookIt = pos.second;
+        auto& nodeList = searchBookIt->second;  // This is the list<NodeOrder>
+        auto nodeIt = nodeList.begin();
+
+        for (nodeIt = nodeList.begin(); (nodeIt != nodeList.end()) && (aggressiveOffer.volume != 0); ++nodeIt) 
+        {   // from the newest to the oldest
+            stringstream sstm;
+            int id = nodeIt->id;
+            
+            int dealVolume=min(nodeIt->volume, aggressiveOffer.volume);
+            nodeIt->volume = nodeIt->volume - dealVolume;
+            aggressiveOffer.setVolume(aggressiveOffer.volume - dealVolume);
+            
+            sstm<<aggressiveOffer.symbol<<","<<nodeIt->priceInteger<<","<<dealVolume<<","<<aggressiveOffer.id<<","<<nodeIt->id;
+            output.push_back(sstm.str());
+            if(aggressiveOffer.volume ==0)break;
+        }
+        if( (aggressiveOffer.volume != 0) )
+        {
+            orderBooks[{opposeSide, aggressiveOffer.symbol}].erase(searchBookIt);
+        }
+        else 
+        {
+            while ( nodeList.front().id != nodeIt->id ) 
+            {
+                pull(nodeList.front().id);
+            }
+            if ( nodeIt->volume == 0 ) 
+            {
+                pull(nodeIt->id);
+                if ( nodeList.empty() ) orderBooks[{opposeSide, aggressiveOffer.symbol}].erase(searchBookIt);
+            }
             break;
         }
-    return;
-}
-
-vector<int> collectPotentialRecords(NodeOffer aggressiveOffer){
-    vector<int> potentialRecordsIndex;
-    potentialRecordsIndex.clear();
-    // we need index of Stock elements, so we need to implement for loops
-    if(aggressiveOffer.symbol == 'A'){ // look for APPL symbol records
-        if( aggressiveOffer.side == 'S' ){ // look for buy records
-            // collect a list of potential candidates
-            for (int i = 0; i < stock.size(); i++){
-                NodeOffer it = stock[i];
-                if(it.side== 'S' || it.symbol != 'A' )continue;
-                if(aggressiveOffer.priceInteger <= it.priceInteger){
-                    potentialRecordsIndex.push_back(i);
-                }
-            }
-        }else{              // look for sell records
-            // collect a list of potential candidates
-            for (int i = 0; i < stock.size(); i++){
-                NodeOffer it = stock[i];
-                if(it.side== 'B' || it.symbol != 'A' )continue;
-                if(aggressiveOffer.priceInteger >= it.priceInteger){
-                    potentialRecordsIndex.push_back(i);
-                }
-            }
-        }
+        pos = collectPotentialRecords(aggressiveOffer);
     }
-    else if(aggressiveOffer.symbol == 'T'){                   // look for APPL symbol records
-        if( aggressiveOffer.side == 'S' ){ // look for buy records
-            // collect a list of potential candidates
-            for (int i = 0; i < stock.size(); i++){
-                NodeOffer it = stock[i];
-                if(it.side== 'S' || it.symbol != 'T' )continue;
-                if(aggressiveOffer.priceInteger <= it.priceInteger){
-                    potentialRecordsIndex.push_back(i);
-                }
-            }
-        }else{              // look for sell records
-            // collect a list of potential candidates
-            for (int i = 0; i < stock.size(); i++){
-                NodeOffer it = stock[i];
-                if(it.side== 'B' || it.symbol != 'T' )continue;
-                if(aggressiveOffer.priceInteger >= it.priceInteger){
-                    potentialRecordsIndex.push_back(i);
-                }
-            }
-        }
-    }if(aggressiveOffer.symbol == 'W'){
-        if( aggressiveOffer.side == 'S' ){ // look for buy records
-            // collect a list of potential candidates
-            for (int i = 0; i < stock.size(); i++){
-                NodeOffer it = stock[i];
-                if(it.side== 'S' || it.symbol != 'W' )continue;
-                if(aggressiveOffer.priceInteger <= it.priceInteger){
-                    potentialRecordsIndex.push_back(i);
-                }
-            }
-        }else{              // look for sell records
-            // collect a list of potential candidates
-            for (int i = 0; i < stock.size(); i++){
-                NodeOffer it = stock[i];
-                if(it.side== 'B' || it.symbol != 'W' )continue;
-                if(aggressiveOffer.priceInteger >= it.priceInteger){
-                    potentialRecordsIndex.push_back(i);
-                }
-            }
-        }
-    }
-    return potentialRecordsIndex;
-}
-
-pair<vector<NodeOffer>::iterator,vector<NodeOffer>::iterator> findRangePrice(NodeOffer aggressiveOffer, vector<NodeOffer> *destRep){
-    vector<NodeOffer>::iterator it_begin = lower_bound(destRep->begin(),destRep->end(), aggressiveOffer.priceInteger, cmprFun);
-    vector<NodeOffer>::iterator it_end = upper_bound(it_begin,destRep->end(), aggressiveOffer.priceInteger, cmprFun2);
-    return make_pair(it_begin, it_end);
-}
-
-void pushPriorityBased(NodeOffer aggressiveOffer, vector<NodeOffer> *destRep){// First, tried to implement  by priority queue, however, we need access to elements
-    
-    if(destRep->size()!=0){
-        pair<vector<NodeOffer>::iterator,vector<NodeOffer>::iterator> it_pair = findRangePrice(aggressiveOffer, destRep);
-        vector<NodeOffer>::iterator it_begin = upper_bound(it_pair.first,it_pair.second, aggressiveOffer.timeTurn, cmprFunTime);
-        destRep->insert(it_begin, aggressiveOffer);
-    }
-    else destRep->push_back(aggressiveOffer);
-}
-
-vector<std::string> checkMatching(NodeOffer aggressiveOffer){
-    // sort direction
-    if( aggressiveOffer.side == 'B' ){
-        sellAgressiveFlag=false;
-        vector<NodeOffer> filteredNodes;
-        for (int i=0;i<stock.size();i++)pushPriorityBased(stock[i],&filteredNodes);
-        stock = filteredNodes;
-    }
-    else{
-        sellAgressiveFlag=true;
-        vector<NodeOffer> filteredNodes;
-        for (int i=0;i<stock.size();i++)pushPriorityBased(stock[i],&filteredNodes);
-        stock = filteredNodes;
-    } 
-    
-    vector<int> potentialRecordsIndex = collectPotentialRecords(aggressiveOffer); // having the indexes in stock
-    
-    
-    vector<std::string> output;
-    output.clear();
-    for (int it = 0; it < potentialRecordsIndex.size(); it++){
-        std::stringstream sstm;
-        int id = potentialRecordsIndex[it];
+    if(aggressiveOffer.volume !=0)
+    {
+        auto& orderList = orderBooks[{aggressiveOffer.side, aggressiveOffer.symbol}][aggressiveOffer.priceInteger];
         
-        int dealVolume=min(stock[id].volume, aggressiveOffer.volume);
-        stock[id].volume -= dealVolume;
-        aggressiveOffer.volume -= dealVolume;
-        
-        if(aggressiveOffer.symbol=='A')
-            sstm<<"AAPL,"<<stock[id].priceInteger<<","<<dealVolume<<","<<aggressiveOffer.id<<","<<stock[id].id;
-        else if(aggressiveOffer.symbol=='T')sstm<<"TSLA,"<<stock[id].priceInteger<<","<<dealVolume<<","<<aggressiveOffer.id<<","<<stock[id].id;
-        else sstm<<"WEBB,"<<stock[id].priceInteger<<","<<dealVolume<<","<<aggressiveOffer.id<<","<<stock[id].id;
-        output.push_back(sstm.str());
-        if(aggressiveOffer.volume ==0)break;
+        orderList.push_back(aggressiveOffer);
+        idMap[aggressiveOffer.id] = prev(orderList.end());
     }
-    for(const int& id_p : potentialRecordsIndex ){
-        if( stock[id_p].volume == 0 ){
-            pull(stock[id_p].id);
-        }         
-    }
-    if(aggressiveOffer.volume !=0)pushPriorityBased(aggressiveOffer, &stock);
     else pull(aggressiveOffer.id);
-    return output;
 }
 
-vector<std::string> waitingOffers(){
-    vector<std::string> output;
-    output.clear();   
-    char symbArr[3] = {'A','T','W'};
-    char sideArr[3] = {'S','B'};
-    
-    
-    
-    for( char& symb : symbArr){
-        vector<pair<float, int>> forSalePairs,forBuyPairs;
-        forSalePairs.clear();forBuyPairs.clear();   // just in case
-        for( char& sideEL : sideArr){
-            
-            vector<NodeOffer> filteredNodes;
-            filteredNodes.clear();  // just in case
-            copy_if(stock.begin(), stock.end(), back_inserter(filteredNodes), [sideEL,symb](const NodeOffer& i){return i.side==sideEL && i.symbol==symb && i.volume!=0;}); 
-            if(filteredNodes.size()==0)continue;
-            
-            // tune sort order:
-            if(sideEL=='S')sellAgressiveFlag=false;
-            else sellAgressiveFlag=true;
-            sort(filteredNodes.begin(),filteredNodes.end());    //sort based on price and time(id)// more price, less index
-
-            int volumeSum=0;float priceTemp=0.0;
-            for ( int it = 0 ; it < filteredNodes.size() ; it++ ){
-                if(priceTemp == filteredNodes[it].priceInteger)volumeSum += filteredNodes[it].volume;
-                else {
-                    // fill two side of the buy/sell queue
-                    if(priceTemp!=0 && sideEL=='S')forSalePairs.push_back(make_pair(priceTemp,volumeSum));
-                    if(priceTemp!=0 && sideEL=='B')forBuyPairs.push_back(make_pair(priceTemp,volumeSum));
-                    priceTemp = filteredNodes[it].priceInteger;
-                    volumeSum=filteredNodes[it].volume;
-                }
+vector<string> printingOffers(vector<string> &output)
+{
+    vector<string> output2;
+    string symbArr[3] = {"AAPL","TSLA","WEBB"};
+    for( string& symb : symbArr)
+    {
+        std::stringstream sstm;
+        if(orderBooks[{ Side::SELL, symb }].size() || orderBooks[{ Side::BUY, symb }].size()){
+            sstm<<"==="<<symb<<"==="; 
+            output.push_back(sstm.str());
+        }
+        for (auto itSell = orderBooks[{ Side::SELL, symb }].begin(); itSell != orderBooks[{ Side::SELL, symb }].end(); ++itSell)
+        {
+            int volumes=0;
+            for (auto itList = itSell->second.begin(); itList != itSell->second.end(); ++itList)
+            {
+                volumes+=itList->volume;
             }
-            if(priceTemp!=0 && sideEL=='B')forBuyPairs.push_back(make_pair(priceTemp,volumeSum));
-            if(priceTemp!=0 && sideEL=='S')forSalePairs.push_back(make_pair(priceTemp,volumeSum));
+            sstm.str("");
+            sstm<<","<<","<<itSell->first<<","<<volumes; 
+            output2.push_back(sstm.str());
         }
-        
-        int waitingSize = forSalePairs.size() + forBuyPairs.size();
-        if(symb=='A' && waitingSize!=0)output.push_back("===AAPL===");else
-        if(symb=='T' && waitingSize!=0)output.push_back("===TSLA===");else
-        if(symb=='W' && waitingSize!=0)output.push_back("===WEBB===");
-        
-        for(int i=0,j=0; i<forSalePairs.size()&&j<forBuyPairs.size();i++,j++){
-            std::stringstream sstm;
-            sstm<<forBuyPairs[j].first<<","<<forBuyPairs[j].second<<","<<forSalePairs[i].first<<","<<forSalePairs[i].second; 
-            output.push_back(sstm.str());
+        int indVec=0;
+        for (auto itSell = orderBooks[{ Side::BUY, symb }].rbegin(); itSell != orderBooks[{ Side::BUY, symb }].rend(); ++itSell)
+        {
+            int volumes=0;
+            for (auto itList = itSell->second.begin(); itList != itSell->second.end(); ++itList)
+            {
+                volumes+=itList->volume;
+            }
+            string temp("");
+            if(indVec<output2.size())
+                temp = output2[indVec];
+            else temp = ",,,";
+            temp.insert(1, to_string(volumes));
+            temp.insert(0, floatToStr(itSell->first));
+            if(indVec<output2.size())
+                output2[indVec] = temp;
+            else output2.push_back(temp);
+            indVec++;
         }
-        for(int i=forBuyPairs.size(); i<forSalePairs.size();i++){
-            std::stringstream sstm;
-            sstm<<","<<","<<forSalePairs[i].first<<","<<forSalePairs[i].second; 
-            output.push_back(sstm.str());
-        }
-        for(int j=forSalePairs.size(); j<forBuyPairs.size();j++){
-            std::stringstream sstm;
-            sstm<<forBuyPairs[j].first<<","<<forBuyPairs[j].second<<","<<","; 
-            output.push_back(sstm.str());
-        }
+        output.insert(output.end(), output2.begin(), output2.end());
+        output2.clear();
     }
     return output;
 }
 
-vector<std::string> insertFunction(char* pch){
-    NodeOffer temp;
-    pch = strtok (NULL, " ,.-");
-    temp.id=atoi(pch);
-    pch = strtok (NULL, " ,.-");
-    temp.symbol=pch[0];
-    pch = strtok (NULL, " ,.-");
-    temp.side=pch[0];
-    pch = strtok (NULL, " ,-");
-    temp.priceInteger=stof(pch);
-    pch = strtok (NULL, " ,.-");
-    temp.volume=atoi(pch);
-    temp.timeTurn = clockTime++;
-    
-    vector<std::string> outputList = checkMatching(temp);
-    return outputList;
+void insertFunction(vector<string> tokens, vector<string> &output)
+{
+    NodeOrder temp(tokens[1], tokens[2], tokens[4], tokens[5], tokens[3], clockTime++);
+    checkMatching(temp, output);
 }
 
-vector<std::string> amendFunction(char* pch){//,<price>,<volume>
-    pch = strtok (NULL, " ,.-");
-    int nodeId=atoi(pch);
-    pch = strtok (NULL, " ,-");
-    float nodePrice=stof(pch);
-    pch = strtok (NULL, " ,.-");
-    int nodeVolume=atoi(pch);
-    vector<std::string> output;
-    output.clear(); //just in case
+void amendFunction(vector<string> tokens, vector<string> &output)
+{
+    NodeOrder node = copyFromStockByid(tokens[1]);
     
-    for(int j = 0 ; j < stock.size() ; j++){
-        if(stock[j].id == nodeId){
-            if(nodePrice != stock[j].priceInteger){
-                stock[j].volume=nodeVolume;
-                stock[j].timeTurn=clockTime++;
-                if((nodePrice < stock[j].priceInteger && stock[j].side=='S') || (nodePrice > stock[j].priceInteger && stock[j].side=='B')){     // if updating the cost brings a matching possiblity
-                stock[j].priceInteger=nodePrice;
-                output = checkMatching(stock[j]) ;      // then check matching       
-                }else stock[j].priceInteger=nodePrice;
-            }else{
-                if(nodeVolume <= stock[j].volume){  // no time penalty
-                    stock[j].volume=nodeVolume;
-                }
-                else{
-                    stock[j].volume=nodeVolume;
-                    stock[j].timeTurn=clockTime++;
-                    NodeOffer n1;
-                    memcpy(&n1, &stock[j], sizeof(stock[j]));
-                    pull(stock[j].id);
-                    pushPriorityBased(n1, &stock);
-                    
+    if( stof(tokens[2]) != node.priceInteger)
+    {
+        node.setVolume(stoi(tokens[3]));
+        node.setTimeTurn(clockTime++);
+        node.setPrice(tokens[2]);
+        pull(node.id); //?
+        checkMatching(node, output);
+    }else{
+        if(node.volume >= stoi(tokens[3]))
+        {  // no time penalty
+            int argid = stoi(tokens[1]);
+            auto& nodeList = orderBooks[{(idMap[argid])->side, (idMap[argid])->symbol}][(idMap[argid])->priceInteger];
+            for (auto nodeIt = nodeList.begin(); (nodeIt != nodeList.end()); ++nodeIt) 
+            {
+                if(nodeIt->id == argid){
+                    nodeIt->volume=stoi(tokens[3]);   
                 }
             }
-            break;
+        }
+        else{
+            node.setVolume(stoi(tokens[3]));
+            node.setTimeTurn(clockTime++);
+            pull(node.id); //?
+            checkMatching(node, output);
         }
     }
-    return output;
+}
+
+vector<string> tokenize(const string& line) {
+    vector<string> tokens;
+    stringstream ss(line);
+    string token;
+    while (getline(ss, token, ',')) {
+        tokens.push_back(token);
+    }
+    return tokens;
 }
 
 vector<string> run(vector<string> const& input) {
-    vector<std::string> output;
-    stock.clear();
-    for(const string& term : input){
-        char *inpstr = const_cast<char*>(term.c_str());
-        char * pch;
-        pch = strtok (inpstr,",");
-        if ( strcmp(pch,"INSERT") == 0 ){
-            vector<std::string> tempVec = insertFunction(inpstr);
-            output.insert(output.end(), tempVec.begin(), tempVec.end());
+    vector<string> output;
+    orderBooks.clear();
+    idMap.clear();
+    for(const string& term : input)
+    {
+        auto tokens = tokenize(term);
+        if( tokens[0] =="INSERT" )
+        {
+            insertFunction(tokens, output);
         }
-        else if ( strcmp(pch,"PULL") == 0 ){
-            pch = strtok (NULL, " ,.-");
-            pull(atoi(pch));
-        }else{  //  Amend
-            vector<std::string> tempVec = amendFunction(inpstr);
-            output.insert(output.end(), tempVec.begin(), tempVec.end());
+        else if( tokens[0] == "PULL" )
+        {
+            pull(stoi(tokens[1]));
+        }
+        else
+        {
+            amendFunction(tokens, output);
         }
     }
-    
-    vector<std::string> tempVec = waitingOffers();
-    output.insert(output.end(), tempVec.begin(), tempVec.end());
-    
+    printingOffers(output);
+    // for(auto el : output)cout<<el<<endl;
     return output;
 }
